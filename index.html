@@ -77,19 +77,15 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
   // =========================================================================
-  // KONFIGURASI GOOGLE SHEETS (Updating_Monitoring_HTH)
+  // KONFIGURASI GOOGLE SHEETS PRIBADI (HTH Dasarian II November 2026)
   // =========================================================================
-  const SHEET_ID = '1ixKMxBaZqlFJ_931bKgxTu_WM4xBDu0pEFG-ylrxclk';
-  const SHEET_TAB = 'Das II NOvember 2026';
+  const SHEET_ID = '1ewMjYFATP36mX4OpHxssfH6SaDOKi45Dk_MCfL14Rtc';
+  const SHEET_TAB_LABEL = 'HTH Dasarian II November 2026';
 
-  // Sumber GeoJSON Batas Wilayah D.I. Yogyakarta (Provinsi, Kabupaten, Kecamatan)
   const GEO_KECAMATAN_URL = 'https://raw.githubusercontent.com/superpikar/indonesia-geojson/master/id-yo-yogyakarta-kecamatan.geojson';
   const GEO_KABUPATEN_URL = 'https://raw.githubusercontent.com/superpikar/indonesia-geojson/master/id-yo-yogyakarta-kabupaten.geojson';
   const GEO_ZOM_DIY_URL   = 'https://raw.githubusercontent.com/ardhiharun/peta_ZOM_DIY/refs/heads/main/ZOM.json';
 
-  // =========================================================================
-  // LOGIKA KLASIFIKASI & WARNA ARCGIS STANDAR BMKG
-  // =========================================================================
   function classifyHTH(rawVal) {
     const valStr = String(rawVal === undefined || rawVal === null ? '' : rawVal).trim().toUpperCase();
 
@@ -125,11 +121,9 @@
     return { code: '>60', desc: '> 60 hari (Kekeringan Ekstrem)', color: 'rgb(255, 0, 0)', textColor: '#ffffff', radius: 9 }; // Mars Red
   }
 
-  // Normalisasi angka Bujur & Lintang (menangani format titik ribuan Indonesia seperti 1.102.957 atau -795.653)
   function parseCoord(val, isLat) {
     if (val === undefined || val === null) return NaN;
     let s = String(val).trim().replace(/,/g, '.');
-    // Jika terdapat lebih dari 1 tanda titik (misal "1.102.957"), hapus semua titik lalu geser desimal
     if ((s.match(/\./g) || []).length > 1) {
       s = s.replace(/\./g, '');
     }
@@ -137,19 +131,14 @@
     if (isNaN(num)) return NaN;
 
     if (isLat) {
-      // Lintang DIY berada di kisaran -7.5 s.d. -8.2
       while (Math.abs(num) > 15) num = num / 10;
       if (num > 0) num = -num;
     } else {
-      // Bujur DIY berada di kisaran 110.0 s.d. 110.9
       while (Math.abs(num) > 180) num = num / 10;
     }
     return num;
   }
 
-  // =========================================================================
-  // INISIALISASI PETA, BASEMAP & LAYER BATAS WILAYAH
-  // =========================================================================
   const googleStreets = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
     maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
     attribution: 'Map data &copy; Google | BMKG Staklim DIY'
@@ -163,79 +152,48 @@
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', { maxZoom: 16 })
   ]);
 
-  const map = L.map('map', { center: [-7.86, 110.42], zoom: 10, layers: [googleStreets] });
+  const map = L.map('map', { center: [-7.88, 110.42], zoom: 10, layers: [googleStreets] });
 
-  // Layer Group untuk Batas Administrasi & Titik Pos Hujan
   const layerProvDIY   = L.layerGroup().addTo(map);
   const layerKabupaten = L.layerGroup().addTo(map);
   const layerKecamatan = L.layerGroup().addTo(map);
   const markersLayer   = L.layerGroup().addTo(map);
 
-  const baseMaps = {
+  L.control.layers({
     "Peta Jalan & Desa (Google)": googleStreets,
     "Citra Satelit + Jalan": googleHybrid,
     "Peta Polos Minimalis": esriGray
-  };
-  const overlayMaps = {
+  }, {
     "Batas Provinsi DIY (Biru Tebal)": layerProvDIY,
     "Batas Kabupaten (Merah)": layerKabupaten,
     "Batas Kecamatan (Biru)": layerKecamatan,
     "Titik Pos Hujan (HTH)": markersLayer
-  };
-  L.control.layers(baseMaps, overlayMaps, { position: 'topright' }).addTo(map);
+  }, { position: 'topright' }).addTo(map);
 
-  // Muat GeoJSON Batas Provinsi DIY, Kabupaten (Merah), dan Kecamatan (Biru)
   function loadAdminBoundaries() {
-    // 1. Batas Kecamatan (Garis Biru)
-    fetch(GEO_KECAMATAN_URL)
-      .then(r => r.json())
-      .then(data => {
-        L.geoJSON(data, {
-          style: {
-            color: '#1d4ed8',     // Biru
-            weight: 1.4,
-            opacity: 0.9,
-            fillColor: '#ffffff',
-            fillOpacity: 0.05
-          },
-          interactive: false
-        }).addTo(layerKecamatan);
-      }).catch(() => {});
+    fetch(GEO_KECAMATAN_URL).then(r => r.json()).then(data => {
+      L.geoJSON(data, {
+        style: { color: '#1d4ed8', weight: 1.4, opacity: 0.9, fillColor: '#ffffff', fillOpacity: 0.05 },
+        interactive: false
+      }).addTo(layerKecamatan);
+    }).catch(() => {});
 
-    // 2. Batas Kabupaten / Kota (Garis Merah)
-    fetch(GEO_KABUPATEN_URL)
-      .then(r => r.json())
-      .then(data => {
-        L.geoJSON(data, {
-          style: {
-            color: '#dc2626',     // Merah
-            weight: 2.6,
-            dashArray: '8, 4, 2, 4',
-            opacity: 1,
-            fill: false
-          },
-          interactive: false
-        }).addTo(layerKabupaten);
-      }).catch(() => {});
+    fetch(GEO_KABUPATEN_URL).then(r => r.json()).then(data => {
+      L.geoJSON(data, {
+        style: { color: '#dc2626', weight: 2.6, dashArray: '8, 4, 2, 4', opacity: 1, fill: false },
+        interactive: false
+      }).addTo(layerKabupaten);
+    }).catch(() => {});
 
-    // 3. Batas Luar Provinsi D.I. Yogyakarta (Garis Biru Tua Tebal dari ZOM.json DIY)
-    fetch(GEO_ZOM_DIY_URL)
-      .then(r => r.json())
-      .then(data => {
-        const diyLayer = L.geoJSON(data, {
-          style: {
-            color: '#0b3c5d',     // Biru Tua Tebal batas DIY
-            weight: 4.5,
-            opacity: 1,
-            fill: false
-          },
-          interactive: false
-        }).addTo(layerProvDIY);
-        map.fitBounds(diyLayer.getBounds(), { padding: [20, 20] });
-      }).catch(() => {});
+    fetch(GEO_ZOM_DIY_URL).then(r => r.json()).then(data => {
+      const diyLayer = L.geoJSON(data, {
+        style: { color: '#0b3c5d', weight: 4.5, opacity: 1, fill: false },
+        interactive: false
+      }).addTo(layerProvDIY);
+      map.fitBounds(diyLayer.getBounds(), { padding: [20, 20] });
+    }).catch(() => {});
   }
 
-  // Legenda Standar BMKG (HTH + Garis Batas)
   const legend = L.control({ position: 'bottomright' });
   legend.onAdd = function () {
     const div = L.DomUtil.create('div', 'legend');
@@ -320,18 +278,15 @@
     }
   }
 
-  // =========================================================================
-  // KONEKSI LIVE KE GOOGLE SHEETS
-  // =========================================================================
   function loadHTHData() {
     return new Promise((resolve) => {
       let settled = false;
       const timer = setTimeout(() => {
         if (!settled) {
           settled = true;
-          resolve({ rows: [], source: 'Timeout memuat Google Sheets — pastikan akses Share diatur ke Anyone with the link (Viewer)' });
+          resolve({ rows: [], source: 'Timeout memuat Google Sheets — cek koneksi internet' });
         }
-      }, 6000);
+      }, 6500);
 
       window.google = window.google || {};
       window.google.visualization = window.google.visualization || {};
@@ -352,7 +307,6 @@
           r.c.forEach((cell, idx) => {
             const colName = cols[idx];
             if (colName) {
-              // Prioritaskan cell.f (tampilan teks di sheet) agar titik pemisah ribuan tidak terpotong
               const rawCell = cell ? (cell.f !== undefined && cell.f !== null ? String(cell.f).trim() : (cell.v !== null && cell.v !== undefined ? String(cell.v).trim() : '')) : '';
               obj[colName] = rawCell;
             }
@@ -364,12 +318,11 @@
 
         resolve({
           rows: parsedRows,
-          source: `Update: ${SHEET_TAB} • Terhubung Live ke Google Sheets (BMKG Staklim DIY)`
+          source: `Update: ${SHEET_TAB_LABEL} • Terhubung Live ke Google Sheets (BMKG Staklim DIY)`
         });
       };
 
       const script = document.createElement('script');
-      // Menggunakan gid=0 agar otomatis membaca tab pertama meskipun nama tab dasarian diganti tiap 10 hari
       script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=0`;
       script.onerror = () => {
         if (!settled) {
