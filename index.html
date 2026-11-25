@@ -29,7 +29,7 @@
     #map { flex: 1; width: 100%; background: #e8ecef; }
     .legend {
       background: rgba(255, 255, 255, 0.96); padding: 11px 14px; border-radius: 8px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.22); font-size: 11.5px; line-height: 1.5; min-width: 230px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.22); font-size: 11.5px; line-height: 1.5; min-width: 235px;
     }
     .legend h4 { margin: 6px 0 5px; font-size: 12px; color: #0b3c5d; border-bottom: 1px solid #ddd; padding-bottom: 3px; }
     .legend h4:first-child { margin-top: 0; }
@@ -59,8 +59,13 @@
     <p id="sub-title">Menghubungkan ke Google Sheets...</p>
   </div>
   <div class="toolbar">
+    <select id="dasarian-select" class="filter-select" onchange="changeDasarian(this.value)">
+      <option value="Terbaru" selected>Dasarian Terbaru</option>
+      <option value="Das_Minus_1">1 Dasarian Lalu</option>
+      <option value="Das_Minus_2">2 Dasarian Lalu</option>
+    </select>
     <select id="kab-filter" class="filter-select" onchange="renderPoints()">
-      <option value="ALL">Semua Kabupaten / Kota (DIY)</option>
+      <option value="ALL">Semua Kabupaten / Kota (D.I Yogyakarta)</option>
       <option value="BANTUL">Kab. Bantul</option>
       <option value="GUNUNG KIDUL">Kab. Gunung Kidul</option>
       <option value="KULON PROGO">Kab. Kulon Progo</option>
@@ -71,21 +76,24 @@
 </header>
 
 <div class="stats-bar" id="stats-bar">Menghitung ringkasan pos hujan...</div>
-<div id="status-badge">Memuat batas wilayah DIY & data titik HTH...</div>
+<div id="status-badge">Memuat batas administrasi D.I Yogyakarta & data titik HTH...</div>
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
   // =========================================================================
-  // KONFIGURASI GOOGLE SHEETS PRIBADI (HTH Dasarian II November 2026)
+  // KONFIGURASI GOOGLE SHEETS PRIBADI (3 TAB DASARIAN)
   // =========================================================================
   const SHEET_ID = '1ewMjYFATP36mX4OpHxssfH6SaDOKi45Dk_MCfL14Rtc';
-  const SHEET_TAB_LABEL = 'HTH Dasarian II November 2026';
 
-  const GEO_KECAMATAN_URL = 'https://raw.githubusercontent.com/superpikar/indonesia-geojson/master/id-yo-yogyakarta-kecamatan.geojson';
-  const GEO_KABUPATEN_URL = 'https://raw.githubusercontent.com/superpikar/indonesia-geojson/master/id-yo-yogyakarta-kabupaten.geojson';
-  const GEO_ZOM_DIY_URL   = 'https://raw.githubusercontent.com/ardhiharun/peta_ZOM_DIY/refs/heads/main/ZOM.json';
+  // Sumber GeoJSON Batas Administrasi Resmi Indonesia (Provinsi, Kabupaten, Kecamatan - Kode BPS 34)
+  const GEO_PROV_URL = 'https://raw.githubusercontent.com/Vizzuality/growasia_calculator/master/public/data/indonesia_provinces.geojson';
+  const GEO_KAB_URL  = 'https://raw.githubusercontent.com/ardian28/GeoJson-Indonesia-38-Provinsi/main/Kabupaten/34_DI_Yogyakarta.geojson';
+  const GEO_KEC_URL  = 'https://raw.githubusercontent.com/ardian28/GeoJson-Indonesia-38-Provinsi/main/Kecamatan/34_DI_Yogyakarta.geojson';
 
+  // =========================================================================
+  // KLASIFIKASI & WARNA ARCGIS STANDAR BMKG
+  // =========================================================================
   function classifyHTH(rawVal) {
     const valStr = String(rawVal === undefined || rawVal === null ? '' : rawVal).trim().toUpperCase();
 
@@ -139,6 +147,9 @@
     return num;
   }
 
+  // =========================================================================
+  // INISIALISASI PETA & BASEMAP
+  // =========================================================================
   const googleStreets = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
     maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
     attribution: 'Map data &copy; Google | BMKG Staklim DIY'
@@ -164,36 +175,79 @@
     "Citra Satelit + Jalan": googleHybrid,
     "Peta Polos Minimalis": esriGray
   }, {
-    "Batas Provinsi DIY (Biru Tebal)": layerProvDIY,
-    "Batas Kabupaten (Merah)": layerKabupaten,
+    "Batas Provinsi D.I Yogyakarta (Biru Tebal)": layerProvDIY,
+    "Batas Kabupaten / Kota (Merah)": layerKabupaten,
     "Batas Kecamatan (Biru)": layerKecamatan,
     "Titik Pos Hujan (HTH)": markersLayer
   }, { position: 'topright' }).addTo(map);
 
+  // =========================================================================
+  // BATAS ADMINISTRASI: PROVINSI DIY, KABUPATEN (MERAH), KECAMATAN (BIRU)
+  // =========================================================================
   function loadAdminBoundaries() {
-    fetch(GEO_KECAMATAN_URL).then(r => r.json()).then(data => {
-      L.geoJSON(data, {
-        style: { color: '#1d4ed8', weight: 1.4, opacity: 0.9, fillColor: '#ffffff', fillOpacity: 0.05 },
-        interactive: false
-      }).addTo(layerKecamatan);
-    }).catch(() => {});
+    // 1. Batas Kecamatan (Garis Biru Tipis)
+    fetch(GEO_KEC_URL)
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then(data => {
+        L.geoJSON(data, {
+          style: {
+            color: '#2563eb', // Biru
+            weight: 1.1,
+            opacity: 0.85,
+            fillColor: '#ffffff',
+            fillOpacity: 0.04
+          },
+          interactive: false
+        }).addTo(layerKecamatan);
+      }).catch(() => {});
 
-    fetch(GEO_KABUPATEN_URL).then(r => r.json()).then(data => {
-      L.geoJSON(data, {
-        style: { color: '#dc2626', weight: 2.6, dashArray: '8, 4, 2, 4', opacity: 1, fill: false },
-        interactive: false
-      }).addTo(layerKabupaten);
-    }).catch(() => {});
+    // 2. Batas Kabupaten / Kota (Garis Merah Putus-Putus)
+    fetch(GEO_KAB_URL)
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then(data => {
+        const kabLayer = L.geoJSON(data, {
+          style: {
+            color: '#dc2626', // Merah
+            weight: 2.5,
+            dashArray: '8, 4, 2, 4',
+            opacity: 1,
+            fill: false
+          },
+          interactive: false
+        }).addTo(layerKabupaten);
 
-    fetch(GEO_ZOM_DIY_URL).then(r => r.json()).then(data => {
-      const diyLayer = L.geoJSON(data, {
-        style: { color: '#0b3c5d', weight: 4.5, opacity: 1, fill: false },
-        interactive: false
-      }).addTo(layerProvDIY);
-      map.fitBounds(diyLayer.getBounds(), { padding: [20, 20] });
-    }).catch(() => {});
+        // Jika layer Provinsi gagal dimuat, gunakan bounds Kabupaten DIY untuk fokus peta
+        if (layerProvDIY.getLayers().length === 0) {
+          map.fitBounds(kabLayer.getBounds(), { padding: [20, 20] });
+        }
+      }).catch(() => {});
+
+    // 3. Batas Luar Provinsi D.I Yogyakarta (Garis Biru Tua Tebal)
+    fetch(GEO_PROV_URL)
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then(data => {
+        const diyFeatures = (data.features || []).filter(f => {
+          const props = JSON.stringify(f.properties || {}).toUpperCase();
+          return props.includes('YOGYAKARTA');
+        });
+        if (diyFeatures.length > 0) {
+          const provLayer = L.geoJSON({ type: 'FeatureCollection', features: diyFeatures }, {
+            style: {
+              color: '#0b3c5d', // Biru Tua Tebal
+              weight: 4.5,
+              opacity: 1,
+              fill: false
+            },
+            interactive: false
+          }).addTo(layerProvDIY);
+          map.fitBounds(provLayer.getBounds(), { padding: [20, 20] });
+        }
+      }).catch(() => {});
   }
 
+  // =========================================================================
+  // LEGENDA PETA
+  // =========================================================================
   const legend = L.control({ position: 'bottomright' });
   legend.onAdd = function () {
     const div = L.DomUtil.create('div', 'legend');
@@ -207,15 +261,16 @@
       <div class="legend-item"><span class="legend-circle" style="background:rgb(255, 0, 0)"></span><span><b>&gt; 60</b> : Kekeringan Ekstrem</span></div>
       <div class="legend-item"><span class="legend-circle-small" style="background:rgb(38, 115, 0)"></span><span><b>H</b> : Masih ada hujan s/d updating</span></div>
       <h4>BATAS ADMINISTRASI</h4>
-      <div class="legend-item"><span class="legend-line" style="border-top: 4px solid #0b3c5d;"></span><span>Batas Provinsi DIY</span></div>
-      <div class="legend-item"><span class="legend-line" style="border-top: 2.6px dashed #dc2626;"></span><span>Batas Kabupaten / Kota</span></div>
-      <div class="legend-item"><span class="legend-line" style="border-top: 1.5px solid #1d4ed8;"></span><span>Batas Kecamatan</span></div>
+      <div class="legend-item"><span class="legend-line" style="border-top: 4px solid #0b3c5d;"></span><span>Batas Provinsi D.I Yogyakarta</span></div>
+      <div class="legend-item"><span class="legend-line" style="border-top: 2.5px dashed #dc2626;"></span><span>Batas Kabupaten / Kota</span></div>
+      <div class="legend-item"><span class="legend-line" style="border-top: 1.3px solid #2563eb;"></span><span>Batas Kecamatan</span></div>
     `;
     return div;
   };
   legend.addTo(map);
 
   let allStations = [];
+  let dasarianCache = {};
 
   function renderPoints() {
     markersLayer.clearLayers();
@@ -263,7 +318,7 @@
 
     const totalShown = Object.values(counts).reduce((a, b) => a + b, 0);
     document.getElementById('stats-bar').innerHTML = `
-      <span><b>Total Pos (${filterKab === 'ALL' ? 'DIY' : filterKab}): ${totalShown}</b></span>
+      <span><b>Total Pos (${filterKab === 'ALL' ? 'D.I Yogyakarta' : filterKab}): ${totalShown}</b></span>
       <span class="stat-pill"><span class="stat-dot" style="background:rgb(38,115,0)"></span>Hujan (H): ${counts['H']}</span>
       <span class="stat-pill"><span class="stat-dot" style="background:rgb(163,255,115)"></span>1-5 hr: ${counts['1-5']}</span>
       <span class="stat-pill"><span class="stat-dot" style="background:rgb(255,255,0)"></span>6-10 hr: ${counts['6-10']}</span>
@@ -278,13 +333,21 @@
     }
   }
 
-  function loadHTHData() {
+  // =========================================================================
+  // KONEKSI LIVE KE 3 TAB GOOGLE SHEETS (Terbaru, Das_Minus_1, Das_Minus_2)
+  // =========================================================================
+  function loadHTHData(tabName) {
     return new Promise((resolve) => {
+      if (dasarianCache[tabName]) {
+        resolve(dasarianCache[tabName]);
+        return;
+      }
+
       let settled = false;
       const timer = setTimeout(() => {
         if (!settled) {
           settled = true;
-          resolve({ rows: [], source: 'Timeout memuat Google Sheets — cek koneksi internet' });
+          resolve({ rows: [], source: `Timeout memuat tab ${tabName}` });
         }
       }, 6500);
 
@@ -296,34 +359,59 @@
         settled = true;
         clearTimeout(timer);
         if (!response || !response.table) {
-          resolve({ rows: [], source: 'Format tabel Google Sheets tidak terbaca' });
+          resolve({ rows: [], source: `Format tabel tab ${tabName} tidak terbaca` });
           return;
         }
-        const cols = response.table.cols.map(c => (c.label || '').trim().toUpperCase());
-        const parsedRows = [];
 
-        response.table.rows.forEach(r => {
+        // Ambil judul periode dari sel A1 (karena baris 1 berisi teks tanggal dasarian)
+        const rawCols = response.table.cols || [];
+        const judulA1 = (rawCols[0] && rawCols[0].label) ? rawCols[0].label.trim() : tabName;
+
+        // Baris pertama data di gviz adalah baris 2 di sheet (header NO, KABUPATEN, BUJUR, dst.)
+        const allRows = response.table.rows || [];
+        if (allRows.length < 2) {
+          resolve({ rows: [], source: `Data pada tab ${tabName} masih kosong` });
+          return;
+        }
+
+        const headerCells = allRows[0].c || [];
+        const headers = headerCells.map(cell =>
+          cell && cell.v !== null && cell.v !== undefined ? String(cell.v).trim().toUpperCase() : ''
+        );
+
+        const parsedRows = [];
+        for (let i = 1; i < allRows.length; i++) {
+          const r = allRows[i];
+          if (!r || !r.c) continue;
           const obj = {};
           r.c.forEach((cell, idx) => {
-            const colName = cols[idx];
+            const colName = headers[idx];
             if (colName) {
-              const rawCell = cell ? (cell.f !== undefined && cell.f !== null ? String(cell.f).trim() : (cell.v !== null && cell.v !== undefined ? String(cell.v).trim() : '')) : '';
+              const rawCell = cell
+                ? (cell.f !== undefined && cell.f !== null ? String(cell.f).trim() : (cell.v !== null && cell.v !== undefined ? String(cell.v).trim() : ''))
+                : '';
               obj[colName] = rawCell;
             }
           });
           if (obj['BUJUR'] && obj['LINTANG']) {
             parsedRows.push(obj);
           }
-        });
+        }
 
-        resolve({
+        const result = {
           rows: parsedRows,
-          source: `Update: ${SHEET_TAB_LABEL} • Terhubung Live ke Google Sheets (BMKG Staklim DIY)`
-        });
+          source: `Update: ${judulA1} • Terhubung Live ke Google Sheets (BMKG Staklim DIY)`
+        };
+        dasarianCache[tabName] = result;
+        resolve(result);
       };
 
+      const oldScript = document.getElementById('gsheet-hth');
+      if (oldScript) oldScript.remove();
+
       const script = document.createElement('script');
-      script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=0`;
+      script.id = 'gsheet-hth';
+      script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(tabName)}`;
       script.onerror = () => {
         if (!settled) {
           settled = true;
@@ -335,18 +423,25 @@
     });
   }
 
-  loadAdminBoundaries();
+  function changeDasarian(tabName) {
+    const badge = document.getElementById('status-badge');
+    badge.innerText = `Memuat data ${tabName}...`;
+    badge.style.display = 'block';
 
-  loadHTHData().then(res => {
-    allStations = res.rows.sort((a, b) => {
-      const aIsH = String(a.HTH).toUpperCase() === 'H' ? 0 : 1;
-      const bIsH = String(b.HTH).toUpperCase() === 'H' ? 0 : 1;
-      return aIsH - bIsH;
+    loadHTHData(tabName).then(res => {
+      allStations = res.rows.sort((a, b) => {
+        const aIsH = String(a.HTH).toUpperCase() === 'H' ? 0 : 1;
+        const bIsH = String(b.HTH).toUpperCase() === 'H' ? 0 : 1;
+        return aIsH - bIsH;
+      });
+      document.getElementById('sub-title').innerText = res.source;
+      renderPoints();
+      badge.style.display = 'none';
     });
-    document.getElementById('sub-title').innerText = res.source;
-    renderPoints();
-    document.getElementById('status-badge').style.display = 'none';
-  });
+  }
+
+  loadAdminBoundaries();
+  changeDasarian('Terbaru');
 </script>
 </body>
 </html>
