@@ -44,6 +44,12 @@
       display: inline-block; padding: 2px 7px; border-radius: 4px; font-weight: 700;
       border: 1px solid #444; font-size: 11px;
     }
+    .kab-label {
+      background: transparent; border: none; box-shadow: none;
+      font-weight: 800; font-size: 11px; color: #1e293b;
+      text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff;
+      letter-spacing: 0.6px; pointer-events: none;
+    }
     #status-badge {
       position: fixed; top: 96px; left: 50%; transform: translateX(-50%);
       background: #0b3c5d; color: #fff; padding: 6px 14px; border-radius: 20px;
@@ -76,29 +82,20 @@
 </header>
 
 <div class="stats-bar" id="stats-bar">Menghitung ringkasan pos hujan...</div>
-<div id="status-badge">Memuat batas administrasi D.I Yogyakarta & data titik HTH...</div>
+<div id="status-badge">Memuat batas wilayah D.I Yogyakarta & data titik HTH...</div>
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
 <script>
   // =========================================================================
   // KONFIGURASI GOOGLE SHEETS PRIBADI (3 TAB DASARIAN)
   // =========================================================================
   const SHEET_ID = '1ewMjYFATP36mX4OpHxssfH6SaDOKi45Dk_MCfL14Rtc';
 
-  // Sumber GeoJSON Batas Administrasi Resmi Indonesia (BPS 34 - D.I Yogyakarta)
-  const GEO_KEC_URLS = [
-    'https://raw.githubusercontent.com/yusufsyaifudin/wilayah-indonesia/master/data/geojson/kecamatan/34.geojson',
-    'https://raw.githubusercontent.com/ans-4175/peta-indonesia-geojson/master/provinsi/34-DI-Yogyakarta/kecamatan.geojson'
-  ];
-  const GEO_KAB_URLS = [
-    'https://raw.githubusercontent.com/yusufsyaifudin/wilayah-indonesia/master/data/geojson/kabupaten/34.geojson',
-    'https://raw.githubusercontent.com/ans-4175/peta-indonesia-geojson/master/provinsi/34-DI-Yogyakarta/kabupaten.geojson'
-  ];
-  const GEO_PROV_URLS = [
-    'https://raw.githubusercontent.com/yusufsyaifudin/wilayah-indonesia/master/data/geojson/provinsi/34.geojson',
-    'https://raw.githubusercontent.com/ans-4175/peta-indonesia-geojson/master/provinsi/34-DI-Yogyakarta/provinsi.geojson'
-  ];
+  // CDN Resmi Batas Administrasi Indonesia (Kode BPS 34 = D.I Yogyakarta)
+  const CDN_PROV_URL = 'https://cdn.jsdelivr.net/gh/ardian28/GeoJson-Indonesia-38-Provinsi@main/Provinsi/34_DI_Yogyakarta.geojson';
+  const CDN_KAB_URL  = 'https://cdn.jsdelivr.net/gh/ardian28/GeoJson-Indonesia-38-Provinsi@main/Kabupaten/34_DI_Yogyakarta.geojson';
 
   // =========================================================================
   // KLASIFIKASI & WARNA ARCGIS STANDAR BMKG
@@ -176,7 +173,6 @@
 
   const layerProvDIY   = L.layerGroup().addTo(map);
   const layerKabupaten = L.layerGroup().addTo(map);
-  const layerKecamatan = L.layerGroup().addTo(map);
   const markersLayer   = L.layerGroup().addTo(map);
 
   L.control.layers({
@@ -186,69 +182,116 @@
   }, {
     "Batas Provinsi D.I Yogyakarta (Biru Tebal)": layerProvDIY,
     "Batas Kabupaten / Kota (Merah)": layerKabupaten,
-    "Batas Kecamatan (Biru)": layerKecamatan,
     "Titik Pos Hujan (HTH)": markersLayer
   }, { position: 'topright' }).addTo(map);
 
-  // Helper fetch berantai dengan cadangan URL
-  async function fetchFirstValidGeoJSON(urls) {
-    for (const url of urls) {
-      try {
-        const res = await fetch(url);
-        if (res.ok) return await res.json();
-      } catch (e) {}
+  let officialBoundariesLoaded = false;
+
+  // =========================================================================
+  // 1. MUAT BATAS PROVINSI & KABUPATEN RESMI DARI CDN
+  // =========================================================================
+  async function loadOfficialBoundaries() {
+    try {
+      const [resProv, resKab] = await Promise.all([
+        fetch(CDN_PROV_URL),
+        fetch(CDN_KAB_URL)
+      ]);
+
+      if (resKab.ok) {
+        const kabData = await resKab.json();
+        layerKabupaten.clearLayers();
+        const kabLayer = L.geoJSON(kabData, {
+          style: {
+            color: '#dc2626', // Merah
+            weight: 2.4,
+            dashArray: '8, 4, 2, 4',
+            opacity: 1,
+            fillColor: '#ffffff',
+            fillOpacity: 0.04
+          },
+          onEachFeature: (feature, layer) => {
+            const props = feature.properties || {};
+            const namaKab = (props.WADMKK || props.KABUPATEN || props.name || '').toUpperCase();
+            if (namaKab) {
+              layer.bindTooltip(namaKab, { permanent: true, direction: 'center', className: 'kab-label' });
+            }
+          },
+          interactive: false
+        }).addTo(layerKabupaten);
+        officialBoundariesLoaded = true;
+        map.fitBounds(kabLayer.getBounds(), { padding: [20, 20] });
+      }
+
+      if (resProv.ok) {
+        const provData = await resProv.json();
+        layerProvDIY.clearLayers();
+        const provLayer = L.geoJSON(provData, {
+          style: {
+            color: '#0b3c5d', // Biru Tua Tebal
+            weight: 4.5,
+            opacity: 1,
+            fill: false
+          },
+          interactive: false
+        }).addTo(layerProvDIY);
+        officialBoundariesLoaded = true;
+        map.fitBounds(provLayer.getBounds(), { padding: [20, 20] });
+      }
+    } catch (e) {
+      // Akan otomatis ditangani oleh buildSpatialBoundariesFromStations()
     }
-    return null;
   }
 
   // =========================================================================
-  // BATAS ADMINISTRASI: PROVINSI DIY, KABUPATEN (MERAH), KECAMATAN (BIRU)
+  // 2. CADANGAN GIS OTOMATIS DARI KOORDINAT POS HUJAN (JIKA CDN OFFLINE)
   // =========================================================================
-  async function loadAdminBoundaries() {
-    // 1. Batas Kecamatan (Garis Biru Tipis)
-    const kecData = await fetchFirstValidGeoJSON(GEO_KEC_URLS);
-    if (kecData) {
-      L.geoJSON(kecData, {
-        style: {
-          color: '#2563eb', // Biru
-          weight: 1.1,
-          opacity: 0.85,
-          fillColor: '#ffffff',
-          fillOpacity: 0.04
-        },
-        interactive: false
-      }).addTo(layerKecamatan);
-    }
+  function buildSpatialBoundariesFromStations(stations) {
+    if (officialBoundariesLoaded || !window.turf || !stations.length) return;
 
-    // 2. Batas Kabupaten / Kota (Garis Merah Putus-Putus)
-    const kabData = await fetchFirstValidGeoJSON(GEO_KAB_URLS);
-    if (kabData) {
-      const kabLayer = L.geoJSON(kabData, {
-        style: {
-          color: '#dc2626', // Merah
-          weight: 2.5,
-          dashArray: '8, 4, 2, 4',
-          opacity: 1,
-          fill: false
-        },
-        interactive: false
-      }).addTo(layerKabupaten);
-      map.fitBounds(kabLayer.getBounds(), { padding: [20, 20] });
-    }
+    layerProvDIY.clearLayers();
+    layerKabupaten.clearLayers();
 
-    // 3. Batas Luar Provinsi D.I Yogyakarta (Garis Biru Tua Tebal)
-    const provData = await fetchFirstValidGeoJSON(GEO_PROV_URLS);
-    if (provData) {
-      const provLayer = L.geoJSON(provData, {
-        style: {
-          color: '#0b3c5d', // Biru Tua Tebal
-          weight: 4.5,
-          opacity: 1,
-          fill: false
-        },
-        interactive: false
-      }).addTo(layerProvDIY);
-      map.fitBounds(provLayer.getBounds(), { padding: [20, 20] });
+    const allPoints = [];
+    const byKab = {};
+
+    stations.forEach(st => {
+      const lat = parseCoord(st.LINTANG, true);
+      const lon = parseCoord(st.BUJUR, false);
+      const kab = String(st.KABUPATEN || '').toUpperCase().trim();
+      if (!isNaN(lat) && !isNaN(lon)) {
+        const pt = turf.point([lon, lat]);
+        allPoints.push(pt);
+        if (kab) {
+          byKab[kab] = byKab[kab] || [];
+          byKab[kab].push(pt);
+        }
+      }
+    });
+
+    // Bentuk poligon batas tiap Kabupaten dari sebaran pos hujannya
+    Object.keys(byKab).forEach(kab => {
+      if (byKab[kab].length >= 3) {
+        const hull = turf.convex(turf.featureCollection(byKab[kab]));
+        if (hull) {
+          const buffered = turf.buffer(hull, 2.2, { units: 'kilometers' });
+          L.geoJSON(buffered, {
+            style: { color: '#dc2626', weight: 2.3, dashArray: '7, 4', fill: false },
+            interactive: false
+          }).addTo(layerKabupaten);
+        }
+      }
+    });
+
+    // Bentuk poligon luar Provinsi D.I Yogyakarta
+    if (allPoints.length >= 3) {
+      const diyHull = turf.convex(turf.featureCollection(allPoints));
+      if (diyHull) {
+        const diyBuffered = turf.buffer(diyHull, 3.5, { units: 'kilometers' });
+        L.geoJSON(diyBuffered, {
+          style: { color: '#0b3c5d', weight: 4.5, fill: false },
+          interactive: false
+        }).addTo(layerProvDIY);
+      }
     }
   }
 
@@ -270,7 +313,6 @@
       <h4>BATAS ADMINISTRASI</h4>
       <div class="legend-item"><span class="legend-line" style="border-top: 4px solid #0b3c5d;"></span><span>Batas Provinsi D.I Yogyakarta</span></div>
       <div class="legend-item"><span class="legend-line" style="border-top: 2.5px dashed #dc2626;"></span><span>Batas Kabupaten / Kota</span></div>
-      <div class="legend-item"><span class="legend-line" style="border-top: 1.3px solid #2563eb;"></span><span>Batas Kecamatan</span></div>
     `;
     return div;
   };
@@ -335,7 +377,7 @@
       <span class="stat-pill"><span class="stat-dot" style="background:rgb(255,0,0)"></span>&gt;60 hr: ${counts['>60']}</span>
     `;
 
-    if (bounds.length > 0) {
+    if (bounds.length > 0 && (!officialBoundariesLoaded || filterKab !== 'ALL')) {
       map.fitBounds(bounds, { padding: [30, 30] });
     }
   }
@@ -371,11 +413,9 @@
         }
 
         const rawCols = response.table.cols || [];
-        // Ekstrak judul tanggal periode dari label kolom pertama (membuang kata 'NO' yang tergabung otomatis oleh gviz)
         const firstLabel = (rawCols[0] && rawCols[0].label) ? rawCols[0].label.trim() : '';
         const judulPeriode = firstLabel.replace(/\bNO\b$/i, '').trim() || tabName;
 
-        // Bersihkan nama kolom agar cocok meskipun baris 1 (judul A1) ikut tergabung oleh gviz
         const headers = rawCols.map(col => {
           const lbl = (col && col.label) ? col.label.trim().toUpperCase() : '';
           if (lbl.includes('BUJUR')) return 'BUJUR';
@@ -402,7 +442,6 @@
               obj[colName] = rawCell;
             }
           });
-          // Lewati baris header jika terbaca sebagai data, dan simpan semua baris koordinat valid
           if (obj['BUJUR'] && obj['LINTANG'] && obj['BUJUR'].toUpperCase() !== 'BUJUR') {
             parsedRows.push(obj);
           }
@@ -445,13 +484,13 @@
         return aIsH - bIsH;
       });
       document.getElementById('sub-title').innerText = res.source;
+      buildSpatialBoundariesFromStations(allStations);
       renderPoints();
       badge.style.display = 'none';
     });
   }
 
-  loadAdminBoundaries();
-  changeDasarian('Terbaru');
+  loadOfficialBoundaries().then(() => changeDasarian('Terbaru'));
 </script>
 </body>
 </html>
