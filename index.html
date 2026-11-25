@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Monitoring Hari Tanpa Hujan (HTH) D.I. Yogyakarta - BMKG Staklim DIY</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, sans-serif; }
+    body { display: flex; flex-direction: column; height: 100vh; background: #f4f6f8; }
+    header {
+      background: #0b3c5d; color: #fff; padding: 10px 18px;
+      display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25); z-index: 1000;
+    }
+    header h1 { font-size: 15px; font-weight: 700; letter-spacing: 0.3px; }
+    header p { font-size: 11.5px; color: #fde68a; font-weight: 600; margin-top: 2px; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .filter-select {
+      background: #1b4f72; color: #fff; border: 1px solid #5dade2;
+      padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;
+    }
+    .stats-bar {
+      background: #ffffff; border-bottom: 1px solid #d1d5db; padding: 6px 18px;
+      display: flex; flex-wrap: wrap; gap: 12px; align-items: center; font-size: 11.5px; color: #374151; z-index: 999;
+    }
+    .stat-pill { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
+    .stat-dot { width: 10px; height: 10px; border-radius: 50%; border: 1px solid #333; display: inline-block; }
+    #map { flex: 1; width: 100%; background: #e8ecef; }
+    .legend {
+      background: rgba(255, 255, 255, 0.96); padding: 11px 14px; border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.22); font-size: 11.5px; line-height: 1.5; min-width: 230px;
+    }
+    .legend h4 { margin: 6px 0 5px; font-size: 12px; color: #0b3c5d; border-bottom: 1px solid #ddd; padding-bottom: 3px; }
+    .legend h4:first-child { margin-top: 0; }
+    .legend-item { display: flex; align-items: center; gap: 9px; margin-bottom: 4px; }
+    .legend-circle { width: 14px; height: 14px; border-radius: 50%; border: 1.2px solid #222; flex-shrink: 0; }
+    .legend-circle-small { width: 8px; height: 8px; border-radius: 50%; border: 1px solid #222; margin: 0 3px; flex-shrink: 0; }
+    .legend-line { width: 22px; height: 0; flex-shrink: 0; }
+    .popup-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+    .popup-table td { padding: 4px 6px; border-bottom: 1px solid #eee; }
+    .popup-table td:first-child { font-weight: 600; color: #444; width: 42%; }
+    .badge-hth {
+      display: inline-block; padding: 2px 7px; border-radius: 4px; font-weight: 700;
+      border: 1px solid #444; font-size: 11px;
+    }
+    #status-badge {
+      position: fixed; top: 96px; left: 50%; transform: translateX(-50%);
+      background: #0b3c5d; color: #fff; padding: 6px 14px; border-radius: 20px;
+      font-size: 11px; z-index: 2000; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1 id="main-title">MONITORING HARI TANPA HUJAN BERTURUT-TURUT (HTH) D.I. YOGYAKARTA</h1>
+    <p id="sub-title">Menghubungkan ke Google Sheets...</p>
+  </div>
+  <div class="toolbar">
+    <select id="kab-filter" class="filter-select" onchange="renderPoints()">
+      <option value="ALL">Semua Kabupaten / Kota (DIY)</option>
+      <option value="BANTUL">Kab. Bantul</option>
+      <option value="GUNUNG KIDUL">Kab. Gunung Kidul</option>
+      <option value="KULON PROGO">Kab. Kulon Progo</option>
+      <option value="SLEMAN">Kab. Sleman</option>
+      <option value="KOTA YOGYAKARTA">Kota Yogyakarta</option>
+    </select>
+  </div>
+</header>
+
+<div class="stats-bar" id="stats-bar">Menghitung ringkasan pos hujan...</div>
+<div id="status-badge">Memuat batas wilayah DIY & data titik HTH...</div>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  // =========================================================================
+  // KONFIGURASI GOOGLE SHEETS (Updating_Monitoring_HTH)
+  // =========================================================================
+  const SHEET_ID = '1ixKMxBaZqlFJ_931bKgxTu_WM4xBDu0pEFG-ylrxclk';
+  const SHEET_TAB = 'Das II NOvember 2026';
+
+  // Sumber GeoJSON Batas Wilayah D.I. Yogyakarta (Provinsi, Kabupaten, Kecamatan)
+  const GEO_KECAMATAN_URL = 'https://raw.githubusercontent.com/superpikar/indonesia-geojson/master/id-yo-yogyakarta-kecamatan.geojson';
+  const GEO_KABUPATEN_URL = 'https://raw.githubusercontent.com/superpikar/indonesia-geojson/master/id-yo-yogyakarta-kabupaten.geojson';
+  const GEO_ZOM_DIY_URL   = 'https://raw.githubusercontent.com/ardhiharun/peta_ZOM_DIY/refs/heads/main/ZOM.json';
+
+  // =========================================================================
+  // LOGIKA KLASIFIKASI & WARNA ARCGIS STANDAR BMKG
+  // =========================================================================
+  function classifyHTH(rawVal) {
+    const valStr = String(rawVal === undefined || rawVal === null ? '' : rawVal).trim().toUpperCase();
+
+    if (valStr === 'H' || valStr === '0' || valStr === 'HUJAN') {
+      return {
+        code: 'H',
+        desc: 'Masih ada hujan s/d updating (No Drought)',
+        color: 'rgb(38, 115, 0)', // Fir Green
+        textColor: '#ffffff',
+        radius: 5.5
+      };
+    }
+
+    const days = parseFloat(valStr);
+    if (isNaN(days)) {
+      return { code: 'NA', desc: 'Tidak ada data', color: '#9ca3af', textColor: '#111111', radius: 6 };
+    }
+    if (days >= 1 && days <= 5) {
+      return { code: '1-5', desc: '1 - 5 hari (Sangat Pendek)', color: 'rgb(163, 255, 115)', textColor: '#111111', radius: 8.5 }; // Light Apple
+    }
+    if (days >= 6 && days <= 10) {
+      return { code: '6-10', desc: '6 - 10 hari (Pendek)', color: 'rgb(255, 255, 0)', textColor: '#111111', radius: 8.5 }; // Solar Yellow
+    }
+    if (days >= 11 && days <= 20) {
+      return { code: '11-20', desc: '11 - 20 hari (Menengah)', color: 'rgb(255, 170, 0)', textColor: '#111111', radius: 8.5 }; // Seville Orange
+    }
+    if (days >= 21 && days <= 30) {
+      return { code: '21-30', desc: '21 - 30 hari (Panjang)', color: 'rgb(168, 112, 0)', textColor: '#ffffff', radius: 8.5 }; // Burnt Umber
+    }
+    if (days >= 31 && days <= 60) {
+      return { code: '31-60', desc: '31 - 60 hari (Sangat Panjang)', color: 'rgb(255, 190, 232)', textColor: '#111111', radius: 8.5 }; // Rose Quartz
+    }
+    return { code: '>60', desc: '> 60 hari (Kekeringan Ekstrem)', color: 'rgb(255, 0, 0)', textColor: '#ffffff', radius: 9 }; // Mars Red
+  }
+
+  // Normalisasi angka Bujur & Lintang (menangani format titik ribuan Indonesia seperti 1.102.957 atau -795.653)
+  function parseCoord(val, isLat) {
+    if (val === undefined || val === null) return NaN;
+    let s = String(val).trim().replace(/,/g, '.');
+    // Jika terdapat lebih dari 1 tanda titik (misal "1.102.957"), hapus semua titik lalu geser desimal
+    if ((s.match(/\./g) || []).length > 1) {
+      s = s.replace(/\./g, '');
+    }
+    let num = parseFloat(s);
+    if (isNaN(num)) return NaN;
+
+    if (isLat) {
+      // Lintang DIY berada di kisaran -7.5 s.d. -8.2
+      while (Math.abs(num) > 15) num = num / 10;
+      if (num > 0) num = -num;
+    } else {
+      // Bujur DIY berada di kisaran 110.0 s.d. 110.9
+      while (Math.abs(num) > 180) num = num / 10;
+    }
+    return num;
+  }
+
+  // =========================================================================
+  // INISIALISASI PETA, BASEMAP & LAYER BATAS WILAYAH
+  // =========================================================================
+  const googleStreets = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+    maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+    attribution: 'Map data &copy; Google | BMKG Staklim DIY'
+  });
+  const googleHybrid = L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+    maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+    attribution: 'Imagery &copy; Google | BMKG Staklim DIY'
+  });
+  const esriGray = L.layerGroup([
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 16 }),
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', { maxZoom: 16 })
+  ]);
+
+  const map = L.map('map', { center: [-7.86, 110.42], zoom: 10, layers: [googleStreets] });
+
+  // Layer Group untuk Batas Administrasi & Titik Pos Hujan
+  const layerProvDIY   = L.layerGroup().addTo(map);
+  const layerKabupaten = L.layerGroup().addTo(map);
+  const layerKecamatan = L.layerGroup().addTo(map);
+  const markersLayer   = L.layerGroup().addTo(map);
+
+  const baseMaps = {
+    "Peta Jalan & Desa (Google)": googleStreets,
+    "Citra Satelit + Jalan": googleHybrid,
+    "Peta Polos Minimalis": esriGray
+  };
+  const overlayMaps = {
+    "Batas Provinsi DIY (Biru Tebal)": layerProvDIY,
+    "Batas Kabupaten (Merah)": layerKabupaten,
+    "Batas Kecamatan (Biru)": layerKecamatan,
+    "Titik Pos Hujan (HTH)": markersLayer
+  };
+  L.control.layers(baseMaps, overlayMaps, { position: 'topright' }).addTo(map);
+
+  // Muat GeoJSON Batas Provinsi DIY, Kabupaten (Merah), dan Kecamatan (Biru)
+  function loadAdminBoundaries() {
+    // 1. Batas Kecamatan (Garis Biru)
+    fetch(GEO_KECAMATAN_URL)
+      .then(r => r.json())
+      .then(data => {
+        L.geoJSON(data, {
+          style: {
+            color: '#1d4ed8',     // Biru
+            weight: 1.4,
+            opacity: 0.9,
+            fillColor: '#ffffff',
+            fillOpacity: 0.05
+          },
+          interactive: false
+        }).addTo(layerKecamatan);
+      }).catch(() => {});
+
+    // 2. Batas Kabupaten / Kota (Garis Merah)
+    fetch(GEO_KABUPATEN_URL)
+      .then(r => r.json())
+      .then(data => {
+        L.geoJSON(data, {
+          style: {
+            color: '#dc2626',     // Merah
+            weight: 2.6,
+            dashArray: '8, 4, 2, 4',
+            opacity: 1,
+            fill: false
+          },
+          interactive: false
+        }).addTo(layerKabupaten);
+      }).catch(() => {});
+
+    // 3. Batas Luar Provinsi D.I. Yogyakarta (Garis Biru Tua Tebal dari ZOM.json DIY)
+    fetch(GEO_ZOM_DIY_URL)
+      .then(r => r.json())
+      .then(data => {
+        const diyLayer = L.geoJSON(data, {
+          style: {
+            color: '#0b3c5d',     // Biru Tua Tebal batas DIY
+            weight: 4.5,
+            opacity: 1,
+            fill: false
+          },
+          interactive: false
+        }).addTo(layerProvDIY);
+        map.fitBounds(diyLayer.getBounds(), { padding: [20, 20] });
+      }).catch(() => {});
+  }
+
+  // Legenda Standar BMKG (HTH + Garis Batas)
+  const legend = L.control({ position: 'bottomright' });
+  legend.onAdd = function () {
+    const div = L.DomUtil.create('div', 'legend');
+    div.innerHTML = `
+      <h4>KLASIFIKASI HTH (Hari)</h4>
+      <div class="legend-item"><span class="legend-circle" style="background:rgb(163, 255, 115)"></span><span><b>1 – 5</b> : Sangat Pendek</span></div>
+      <div class="legend-item"><span class="legend-circle" style="background:rgb(255, 255, 0)"></span><span><b>6 – 10</b> : Pendek</span></div>
+      <div class="legend-item"><span class="legend-circle" style="background:rgb(255, 170, 0)"></span><span><b>11 – 20</b> : Menengah</span></div>
+      <div class="legend-item"><span class="legend-circle" style="background:rgb(168, 112, 0)"></span><span><b>21 – 30</b> : Panjang</span></div>
+      <div class="legend-item"><span class="legend-circle" style="background:rgb(255, 190, 232)"></span><span><b>31 – 60</b> : Sangat Panjang</span></div>
+      <div class="legend-item"><span class="legend-circle" style="background:rgb(255, 0, 0)"></span><span><b>&gt; 60</b> : Kekeringan Ekstrem</span></div>
+      <div class="legend-item"><span class="legend-circle-small" style="background:rgb(38, 115, 0)"></span><span><b>H</b> : Masih ada hujan s/d updating</span></div>
+      <h4>BATAS ADMINISTRASI</h4>
+      <div class="legend-item"><span class="legend-line" style="border-top: 4px solid #0b3c5d;"></span><span>Batas Provinsi DIY</span></div>
+      <div class="legend-item"><span class="legend-line" style="border-top: 2.6px dashed #dc2626;"></span><span>Batas Kabupaten / Kota</span></div>
+      <div class="legend-item"><span class="legend-line" style="border-top: 1.5px solid #1d4ed8;"></span><span>Batas Kecamatan</span></div>
+    `;
+    return div;
+  };
+  legend.addTo(map);
+
+  let allStations = [];
+
+  function renderPoints() {
+    markersLayer.clearLayers();
+    const filterKab = document.getElementById('kab-filter').value;
+    const counts = { 'H': 0, '1-5': 0, '6-10': 0, '11-20': 0, '21-30': 0, '31-60': 0, '>60': 0 };
+    const bounds = [];
+
+    allStations.forEach(st => {
+      const kab = String(st.KABUPATEN || '').toUpperCase().trim();
+      if (filterKab !== 'ALL' && kab !== filterKab) return;
+
+      const lat = parseCoord(st.LINTANG, true);
+      const lon = parseCoord(st.BUJUR, false);
+      if (isNaN(lat) || isNaN(lon)) return;
+
+      const info = classifyHTH(st.HTH);
+      if (counts[info.code] !== undefined) counts[info.code]++;
+
+      const marker = L.circleMarker([lat, lon], {
+        radius: info.radius,
+        fillColor: info.color,
+        color: '#111827',
+        weight: 1.4,
+        opacity: 1,
+        fillOpacity: 0.94
+      });
+
+      const popupHtml = `
+        <div style="min-width:225px">
+          <h3 style="margin:0 0 4px; color:#0b3c5d; font-size:13.5px;">${st.STASIUN || 'Pos Hujan'}</h3>
+          <table class="popup-table">
+            <tr><td>Kabupaten</td><td>${st.KABUPATEN || '-'}</td></tr>
+            <tr><td>Kecamatan</td><td>${st.KECAMATAN || '-'}</td></tr>
+            <tr><td>Koordinat</td><td>${lat.toFixed(5)}, ${lon.toFixed(5)}</td></tr>
+            <tr><td>Nilai HTH</td><td><span class="badge-hth" style="background:${info.color}; color:${info.textColor};">${st.HTH}</span></td></tr>
+            <tr><td>Keterangan</td><td><b>${info.desc}</b></td></tr>
+          </table>
+        </div>
+      `;
+      marker.bindPopup(popupHtml);
+      marker.bindTooltip(`<b>${st.STASIUN}</b> (${String(st.HTH).toUpperCase() === 'H' ? 'Masih Hujan' : st.HTH + ' hari'})`, { direction: 'top' });
+      marker.addTo(markersLayer);
+      bounds.push([lat, lon]);
+    });
+
+    const totalShown = Object.values(counts).reduce((a, b) => a + b, 0);
+    document.getElementById('stats-bar').innerHTML = `
+      <span><b>Total Pos (${filterKab === 'ALL' ? 'DIY' : filterKab}): ${totalShown}</b></span>
+      <span class="stat-pill"><span class="stat-dot" style="background:rgb(38,115,0)"></span>Hujan (H): ${counts['H']}</span>
+      <span class="stat-pill"><span class="stat-dot" style="background:rgb(163,255,115)"></span>1-5 hr: ${counts['1-5']}</span>
+      <span class="stat-pill"><span class="stat-dot" style="background:rgb(255,255,0)"></span>6-10 hr: ${counts['6-10']}</span>
+      <span class="stat-pill"><span class="stat-dot" style="background:rgb(255,170,0)"></span>11-20 hr: ${counts['11-20']}</span>
+      <span class="stat-pill"><span class="stat-dot" style="background:rgb(168,112,0)"></span>21-30 hr: ${counts['21-30']}</span>
+      <span class="stat-pill"><span class="stat-dot" style="background:rgb(255,190,232)"></span>31-60 hr: ${counts['31-60']}</span>
+      <span class="stat-pill"><span class="stat-dot" style="background:rgb(255,0,0)"></span>&gt;60 hr: ${counts['>60']}</span>
+    `;
+
+    if (filterKab !== 'ALL' && bounds.length > 0) {
+      map.fitBounds(bounds, { padding: [35, 35] });
+    }
+  }
+
+  // =========================================================================
+  // KONEKSI LIVE KE GOOGLE SHEETS
+  // =========================================================================
+  function loadHTHData() {
+    return new Promise((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          resolve({ rows: [], source: 'Timeout memuat Google Sheets — pastikan akses Share diatur ke Anyone with the link (Viewer)' });
+        }
+      }, 6000);
+
+      window.google = window.google || {};
+      window.google.visualization = window.google.visualization || {};
+      window.google.visualization.Query = window.google.visualization.Query || {};
+      window.google.visualization.Query.setResponse = function(response) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (!response || !response.table) {
+          resolve({ rows: [], source: 'Format tabel Google Sheets tidak terbaca' });
+          return;
+        }
+        const cols = response.table.cols.map(c => (c.label || '').trim().toUpperCase());
+        const parsedRows = [];
+
+        response.table.rows.forEach(r => {
+          const obj = {};
+          r.c.forEach((cell, idx) => {
+            const colName = cols[idx];
+            if (colName) {
+              // Prioritaskan cell.f (tampilan teks di sheet) agar titik pemisah ribuan tidak terpotong
+              const rawCell = cell ? (cell.f !== undefined && cell.f !== null ? String(cell.f).trim() : (cell.v !== null && cell.v !== undefined ? String(cell.v).trim() : '')) : '';
+              obj[colName] = rawCell;
+            }
+          });
+          if (obj['BUJUR'] && obj['LINTANG']) {
+            parsedRows.push(obj);
+          }
+        });
+
+        resolve({
+          rows: parsedRows,
+          source: `Update: ${SHEET_TAB} • Terhubung Live ke Google Sheets (BMKG Staklim DIY)`
+        });
+      };
+
+      const script = document.createElement('script');
+      // Menggunakan gid=0 agar otomatis membaca tab pertama meskipun nama tab dasarian diganti tiap 10 hari
+      script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=0`;
+      script.onerror = () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve({ rows: [], source: 'Gagal menghubungi Google Sheets — cek pengaturan Share file' });
+        }
+      };
+      document.body.appendChild(script);
+    });
+  }
+
+  loadAdminBoundaries();
+
+  loadHTHData().then(res => {
+    allStations = res.rows.sort((a, b) => {
+      const aIsH = String(a.HTH).toUpperCase() === 'H' ? 0 : 1;
+      const bIsH = String(b.HTH).toUpperCase() === 'H' ? 0 : 1;
+      return aIsH - bIsH;
+    });
+    document.getElementById('sub-title').innerText = res.source;
+    renderPoints();
+    document.getElementById('status-badge').style.display = 'none';
+  });
+</script>
+</body>
+</html>
